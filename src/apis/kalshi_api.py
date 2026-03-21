@@ -49,7 +49,7 @@ def main():
 
     rows = []
 
-    for i, s in enumerate(series_list[:1000], start=1):
+    for i, s in enumerate(series_list[:100], start=1):
         print(f"[{i}/{len(series_list)}] {s['ticker']}")
         markets = get_markets_for_series(s["ticker"])
 
