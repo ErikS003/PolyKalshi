@@ -11,7 +11,7 @@ def get_model():
         _model = SentenceTransformer('all-MiniLM-L6-v2')
     return _model
 
-def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi='market_title', title_col_poly='market_title', threshold=0.40, top_k=5):
+def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi='market_title', title_col_poly='market_title', threshold=0.40, top_k=5, max_date_diff=45):
     """
     Finds matches strictly based on cosine similarity of the given title columns.
     Returns a DataFrame ranked by semantic similarity.
@@ -30,6 +30,12 @@ def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi='market
     if "status" in polymarket_df.columns:
         polymarket_df["status"] = polymarket_df["status"].astype(str).str.lower().str.strip()
         polymarket_df = polymarket_df[polymarket_df["status"] == "active"]
+
+    # Convert close_time to datetime
+    if "close_time" in kalshi_df.columns:
+        kalshi_df["close_time"] = pd.to_datetime(kalshi_df["close_time"], errors='coerce')
+    if "close_time" in polymarket_df.columns:
+        polymarket_df["close_time"] = pd.to_datetime(polymarket_df["close_time"], errors='coerce')
 
     kalshi_df[title_col_kalshi] = kalshi_df[title_col_kalshi].fillna("")
     polymarket_df[title_col_poly] = polymarket_df[title_col_poly].fillna("")
@@ -55,15 +61,24 @@ def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi='market
             s_val = score.item()
             idx_val = idx.item()
             if s_val >= threshold:
+                k_row = kalshi_df.iloc[i]
+                p_row = polymarket_df.iloc[idx_val]
+                
+                # Filter by date
+                if pd.notna(k_row.get("close_time")) and pd.notna(p_row.get("close_time")):
+                    date_diff = abs((k_row["close_time"] - p_row["close_time"]).days)
+                    if date_diff > max_date_diff:
+                        continue
+                
                 match_dict = {
-                    "kalshi_series_ticker": kalshi_df.iloc[i].get("series_ticker", ""),
-                    "kalshi_market_ticker": kalshi_df.iloc[i].get("market_ticker", ""),
+                    "kalshi_series_ticker": k_row.get("series_ticker", ""),
+                    "kalshi_market_ticker": k_row.get("market_ticker", ""),
                     "kalshi_market_title": k_titles[i],
-                    "kalshi_rules": kalshi_df.iloc[i].get("rules_text", ""),
-                    "polymarket_series_ticker": polymarket_df.iloc[idx_val].get("series_ticker", ""),
-                    "polymarket_market_ticker": polymarket_df.iloc[idx_val].get("market_ticker", ""),
+                    "kalshi_rules": k_row.get("rules_text", ""),
+                    "polymarket_series_ticker": p_row.get("series_ticker", ""),
+                    "polymarket_market_ticker": p_row.get("market_ticker", ""),
                     "polymarket_market_title": p_titles[idx_val],
-                    "polymarket_rules": polymarket_df.iloc[idx_val].get("rules_text", ""),
+                    "polymarket_rules": p_row.get("rules_text", ""),
                     "semantic_score": round(s_val, 4)
                 }
                 matches_list.append(match_dict)
