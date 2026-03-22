@@ -13,3 +13,9 @@ Any replacement of the nominee before election day will not change the resolutio
 
 KALSHI RULES:
 If Michael Blake wins the nomination for the Democratic Party to contest the 2026 NY-15 House seat, then the market resolves to Yes.
+
+TODO 2.1
+
+LLMtest.py is work in progress, the pre prompt can be refined, finding the "right" model is not trivial, for now its local.
+verifying its outputs is needed (maybe manually). etc etc
+
