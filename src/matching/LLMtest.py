@@ -27,6 +27,9 @@ Important rules:
 
 Return exactly this format and nothing else:
 
+Label: Not Equivalent
+Reason: <12 words max>
+
 or
 
 Label: Equivalent
