@@ -3,6 +3,14 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from openai import OpenAI
 import torch
 import time
+def parse_binary_response(response: str):
+    text = response.strip()
+    if text == "0":
+        return 0
+    if text == "1":
+        return 1
+    return None
+predictions = []
 
 print("torch:", torch.__version__)
 print("cuda available:", torch.cuda.is_available())
@@ -11,29 +19,39 @@ print("gpu:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "n
 df = pd.read_csv(r"Data/candidate_series_matches.csv")
 print(df.columns.tolist())
 print(df[["kalshi_candidate_title_clean","polymarket_candidate_title_clean"]])
-PRE_PROMPT = """You are a contract equivalence classifier.
+PRE_PROMPT = """You are a binary classifier for prediction market contract equivalence.
 
 Task:
-Determine whether two prediction market contracts resolve based on the same underlying event.
+Determine whether two contracts resolve based on the same underlying real-world event.
 
-Important rules:
+Rules:
+- Output only one character: 0 or 1
+- Output 1 if the contracts are equivalent.
+- Output 0 if the contracts are not equivalent.
 - Ignore issuance date.
-- Ignore tiny time differences such as minutes or timezone boundary phrasing.
-- Focus only on whether the real-world YES-resolution event is the same.
-- Only compare the resolution conditions.
-- Do not use today's date.
-- Do not reject equivalence just because one text says "before 2027" and another says "during 2026" if they describe the same event window.
-- If the underlying action is different (visit vs hold office, meet vs pardon, etc.), label Not Equivalent.
+- Ignore tiny time differences such as minutes, timezone boundaries, and Dec 31 vs Jan 1 wording.
+- Different time windows alone do not automatically mean not equivalent.
+- A meeting between X and Y is the same people as a meeting between Y and X.
+- Obvious name variants are the same person, e.g. Trump = Donald Trump, Putin = Vladimir Putin.
+- Physical presence in a country is not the same as holding state power there.
+- Focus only on whether the YES-resolution event is the same.
 
-Return exactly this format and nothing else:
+Examples:
+Contract A: Trump meets Putin before Jan 1, 2027.
+Contract B: Donald Trump meets Vladimir Putin during 2026.
+Answer: 1
 
-Label: Not Equivalent
-Reason: <12 words max>
+Contract A: Reza Pahlavi enters Iran by July 1, 2026.
+Contract B: Reza Pahlavi holds state power in Iran by Dec 31, 2026.
+Answer: 0
 
-or
+Contract A: Trump pardons Elizabeth Holmes by Dec 31, 2026.
+Contract B: Elizabeth Holmes receives pardon, commutation, or reprieve from Trump before 2027.
+Answer: 1
 
-Label: Equivalent
-Reason: <12 words max>
+Contract A: Trump meets Kim anytime in 2026.
+Contract B: Trump meets Kim only in March 2026.
+Answer: 0
 """
 TOKENS = False
 HF_TOKEN = "HF"
@@ -52,20 +70,18 @@ if not TOKENS:
 
 
 def build_prompt(contract_a: str, contract_b: str, title_a, title_b) -> list[dict]:
-    user_prompt = f"""
-    
-    Contract A title: {title_a}, 
-    Contract A description: {contract_a}
-    \n0
-    \n
-    Contract B title: {title_b}, 
-    Contract B description: {contract_b}
+    prompt = f"""Contract A:
+    Title: {df.loc[i, "kalshi_market"]}
+    Rules: {row_k}
 
+    Contract B:
+    Title: {df.loc[i, "polymarket_market"]}
+    Rules: {row_p}
 
-    Are these contracts equivalent?"""
+    Answer with only 0 or 1."""
     return [
         {"role": "system", "content": PRE_PROMPT},
-        {"role": "user", "content": user_prompt}
+        {"role": "user", "content": prompt}
     ]
 
 
@@ -126,6 +142,14 @@ for i in range(0, 30):
         print(f"Row {i}")
         print(response)
         print(f"\nActual titles: kalshi: {title_k}, \n polymarket: {title_p}")
-
+    pred = parse_binary_response(response)
+    predictions.append({
+        "row": i,
+        "llm_binary": pred,
+        "kalshi_title": df.loc[i, "kalshi_market"],
+        "polymarket_title": df.loc[i, "polymarket_market"],
+        "raw_response": response,
+    })
     end = time.perf_counter()
     print(f"\nPrompt {i} took {end - start:.2f} seconds\n")
+print(predictions[0])
