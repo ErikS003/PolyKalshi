@@ -12,14 +12,11 @@ load_dotenv(dotenv_path=env_path)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-    logger.error("Could not load Telegram settings from .env!")
-    raise  ValueError("Could not load Telegram settings from .env!")
+    logger.warning("Telegram settings (TELEGRAM_TOKEN/TELEGRAM_CHAT_ID) not found in .env. Notifications will be disabled.")
     
 
 def send_telegram_message(text: str):
@@ -44,39 +41,46 @@ def send_telegram_message(text: str):
         return False
 
 def format_arbitrage_message(match_details: Dict[str, Any]) -> str:
-
     kalshi_title = match_details.get('kalshi_market', 'Unknown Kalshi Market')
     poly_title = match_details.get('polymarket_market', 'Unknown Polymarket Market')
     score = match_details.get('combined_score', 0)
     
+    direction = match_details.get('direction', 'Unknown Direction')
+    profit = match_details.get('expected_profit', 0)
+    cost = match_details.get('total_cost', 0)
 
-    kalshi_price = match_details.get('kalshi_price')
-    poly_price = match_details.get('polymarket_price')
-    arb_percentage = match_details.get('arb_impact') 
+    # Specific prices based on direction
+    if direction == "K_YES_P_NO":
+        k_price = match_details.get('k_yes_ask')
+        p_price = match_details.get('p_no_ask')
+        dir_text = "🟢 Buy Kalshi YES / 🔴 Buy Poly NO"
+    else:
+        k_price = match_details.get('k_no_ask')
+        p_price = match_details.get('p_yes_ask')
+        dir_text = "💎 Buy Poly YES / 🏛 Buy Kalshi NO"
 
-    message = f"🚨 <b>Arbitrage Opportunity Found!</b> 🚨\n\n"
-    message += f"📊 <b>Confidence Score:</b> {score:.2f}\n\n"
+    message = f"💰 <b>Arbitrage Opportunity: {profit:.2f}%</b> 💰\n\n"
+    message += f"🔄 <b>Strategy:</b> {dir_text}\n"
+    message += f"📊 <b>Confidence Score:</b> {score:.2f}\n"
+    message += f"💸 <b>Total Cost:</b> {cost:.2f}c\n\n"
     
     message += f"🏛 <b>Kalshi:</b>\n"
     message += f"<code>{kalshi_title}</code>\n"
-    if kalshi_price:
-        message += f"Price: {kalshi_price}\n"
+    message += f"Ask Price: {k_price}\n"
     message += f"Link: <a href='https://kalshi.com/markets/{match_details.get('kalshi_market_ticker')}'>View on Kalshi</a>\n\n"
 
     message += f"💎 <b>Polymarket:</b>\n"
     message += f"<code>{poly_title}</code>\n"
-    if poly_price:
-        message += f"Price: {poly_price}\n"
+    message += f"Ask Price: {p_price}\n"
 
     if match_details.get('polymarket_market_slug'):
         message += f"Link: <a href='https://polymarket.com/event/{match_details.get('polymarket_market_slug')}'>View on Polymarket</a>\n"
     else:
-        message += f"ID: {match_details.get('polymarket_market_ticker')}\n"
+        # Fallback to market ticker if slug not available
+        p_ticker = match_details.get('polymarket_market_ticker')
+        message += f"ID: {p_ticker}\n"
 
-    if arb_percentage:
-        message += f"\n💰 <b>Estimated Profit:</b> {arb_percentage:.2f}%"
-
-    message += f"\n\n<i>Double-check the rules and prices before executing!</i>"
+    message += f"\n<i>Double-check the rules and prices before executing!</i>"
     
     return message
 
