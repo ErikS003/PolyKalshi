@@ -3,14 +3,40 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from openai import OpenAI
 import torch
 import time
+from datetime import datetime
+
+
 def parse_binary_response(response: str):
     text = response.strip()
     if text == "0":
         return 0
     if text == "1":
         return 1
+
+    # fallback: first 0/1 found
+    for ch in text:
+        if ch == "0":
+            return 0
+        if ch == "1":
+            return 1
     return None
-predictions = []
+
+
+def build_prompt(contract_a: str, contract_b: str, title_a: str, title_b: str):
+    prompt = f"""Contract A:
+Title: {title_a}
+Rules: {contract_a}
+
+Contract B:
+Title: {title_b}
+Rules: {contract_b}
+
+Output exactly one character: 0 or 1."""
+    return [
+        {"role": "system", "content": PRE_PROMPT},
+        {"role": "user", "content": prompt}
+    ]
+
 
 print("torch:", torch.__version__)
 print("cuda available:", torch.cuda.is_available())
@@ -18,7 +44,7 @@ print("gpu:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "n
 
 df = pd.read_csv(r"Data/candidate_series_matches.csv")
 print(df.columns.tolist())
-print(df[["kalshi_candidate_title_clean","polymarket_candidate_title_clean"]])
+
 PRE_PROMPT = """You are a binary classifier for prediction market contract equivalence.
 
 Task:
@@ -35,9 +61,15 @@ Rules:
 - Obvious name variants are the same person, e.g. Trump = Donald Trump, Putin = Vladimir Putin.
 - Physical presence in a country is not the same as holding state power there.
 - Focus only on whether the YES-resolution event is the same.
+- Do not explain your answer.
+- Output exactly one character: 0 or 1.
 """
+
 TOKENS = False
 HF_TOKEN = "HF"
+
+matched_markets = []
+all_predictions = []
 
 if not TOKENS:
     model_name = "Qwen/Qwen2.5-3B-Instruct"
@@ -51,26 +83,9 @@ if not TOKENS:
 
     print("hf_device_map:", getattr(model, "hf_device_map", None))
 
-
-def build_prompt(contract_a: str, contract_b: str, title_a, title_b) -> list[dict]:
-    prompt = f"""Contract A:
-    Title: {df.loc[i, "kalshi_market"]}
-    Rules: {row_k}
-
-    Contract B:
-    Title: {df.loc[i, "polymarket_market"]}
-    Rules: {row_p}
-
-    Answer with only 0 or 1."""
-    return [
-        {"role": "system", "content": PRE_PROMPT},
-        {"role": "user", "content": prompt}
-    ]
-
-
-for i in range(0, 30):
-    title_p = df.loc[i, "polymarket_candidate_title_clean"]
-    title_k = df.loc[i, "kalshi_candidate_title_clean"]
+for i in range(len(df)):
+    title_k = str(df.loc[i, "kalshi_candidate_title_clean"])
+    title_p = str(df.loc[i, "polymarket_candidate_title_clean"])
     row_k = df.loc[i, "kalshi_rules_text"]
     row_p = df.loc[i, "polymarket_rules_text"]
 
@@ -88,15 +103,13 @@ for i in range(0, 30):
 
         completion = client.chat.completions.create(
             model="Qwen/Qwen3.5-35B-A3B:novita",
-            messages=build_prompt(str(row_k), str(row_p)),
+            messages=build_prompt(str(row_k), str(row_p), title_k, title_p),
         )
 
-        response = completion.choices[0].message.content
-        print(f"Row {i}")
-        print(response)
+        response = completion.choices[0].message.content.strip()
 
     else:
-        messages = build_prompt(str(row_k), str(row_p), str(title_k), str(title_p))
+        messages = build_prompt(str(row_k), str(row_p), title_k, title_p)
 
         text = tokenizer.apply_chat_template(
             messages,
@@ -111,7 +124,7 @@ for i in range(0, 30):
 
         generated_ids = model.generate(
             **model_inputs,
-            max_new_tokens=50,
+            max_new_tokens=3,
             do_sample=False,
             pad_token_id=tokenizer.eos_token_id
         )
@@ -122,17 +135,59 @@ for i in range(0, 30):
         new_tokens = generated_ids[:, model_inputs["input_ids"].shape[1]:]
         response = tokenizer.batch_decode(new_tokens, skip_special_tokens=True)[0].strip()
 
-        print(f"Row {i}")
-        print(response)
-        print(f"\nActual titles: kalshi: {title_k}, \n polymarket: {title_p}")
     pred = parse_binary_response(response)
-    predictions.append({
+
+    prediction_text = {
+        1: "Equivalent",
+        0: "Not Equivalent",
+        None: "Unparsed / Invalid"
+    }[pred]
+
+    all_predictions.append({
         "row": i,
         "llm_binary": pred,
-        "kalshi_title": df.loc[i, "kalshi_market"],
-        "polymarket_title": df.loc[i, "polymarket_market"],
-        "raw_response": response,
+        "kalshi_market_ticker": df.loc[i, "kalshi_market_ticker"],
+        "kalshi_series_ticker": df.loc[i, "kalshi_series_ticker"],
+        "kalshi_market": df.loc[i, "kalshi_market"],
+        "polymarket_market_ticker": df.loc[i, "polymarket_market_ticker"],
+        "polymarket_series_ticker": df.loc[i, "polymarket_series_ticker"],
+        "polymarket_market": df.loc[i, "polymarket_market"],
+        "matched_at": datetime.utcnow().isoformat()
     })
+
+    if pred == 1:
+        matched_markets.append({
+            "row": i,
+            "kalshi_market_ticker": df.loc[i, "kalshi_market_ticker"],
+            "kalshi_series_ticker": df.loc[i, "kalshi_series_ticker"],
+            "kalshi_market": df.loc[i, "kalshi_market"],
+            "polymarket_market_ticker": df.loc[i, "polymarket_market_ticker"],
+            "polymarket_series_ticker": df.loc[i, "polymarket_series_ticker"],
+            "polymarket_market": df.loc[i, "polymarket_market"],
+            "matched_at": datetime.utcnow().isoformat()
+        })
+
     end = time.perf_counter()
-    print(f"\nPrompt {i} took {end - start:.2f} seconds\n")
-print(predictions[0])
+
+    print(f"\nRow {i}")
+    print(f"Raw model output: {response!r}")
+    print(f"Predicted: {prediction_text}")
+    print(f"Kalshi title: {title_k}")
+    print(f"Polymarket title: {title_p}")
+    print(f"Prompt {i} took {end - start:.2f} seconds")
+
+# Save all predictions
+#all_predictions_df = pd.DataFrame(all_predictions)
+#all_predictions_df.to_csv("Data/llm_all_predictions.csv", index=False)
+
+# Save only predicted equivalent markets
+matched_markets_df = pd.DataFrame(matched_markets)
+matched_markets_df.to_csv("Data/predicted_equivalent_markets.csv", index=False)
+
+print("\nSaved all predictions to Data/llm_all_predictions.csv")
+print("Saved predicted equivalent markets to Data/predicted_equivalent_markets.csv")
+print(f"Number of predicted equivalent pairs: {len(matched_markets)}")
+
+if len(matched_markets) > 0:
+    print("\nFirst predicted equivalent match:")
+    print(matched_markets[0])
